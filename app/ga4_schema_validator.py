@@ -47,6 +47,73 @@ ADS_METRICS = {
     "advertiserAdImpressions"
 }
 
+METRIC_ALIASES = {
+    # ecommerce
+    "purchases": "ecommercePurchases",
+    "purchase": "ecommercePurchases",
+
+    # events
+    "conversions": "keyEvents",
+    "conversion": "keyEvents",
+
+    # pages
+    "pageviews": "screenPageViews",
+    "page views": "screenPageViews",
+    "page_views": "screenPageViews",
+
+    # sessions
+    "events per session": "eventsPerSession",
+    "eventcountpersession": "eventsPerSession",
+
+    # revenue
+    "revenue": "totalRevenue"
+}
+
+DIMENSION_ALIASES = {
+    # pages
+    "page": "pagePath",
+    "page path": "pagePath",
+    "page url": "pagePathPlusQueryString",
+
+    # geo
+    "country name": "country",
+    "location": "country",
+    "city name": "city",
+
+    # device
+    "device": "deviceCategory",
+    "os": "operatingSystem",
+    "operating system": "operatingSystem",
+
+    # traffic
+    "source": "source",
+    "source / medium": "sourceMedium",
+    "traffic source": "sourceMedium",
+    "campaign": "campaignName",
+
+    # time
+    "day": "date",
+    "daily": "date",
+    "week": "week",
+    "month": "month"
+}
+
+def normalize_metrics(metrics: list[str]) -> list[str]:
+    normalized = []
+
+    for m in metrics:
+        key = m.lower().replace(" ", "")
+        canonical = METRIC_ALIASES.get(key) or METRIC_ALIASES.get(m.lower())
+        normalized.append(canonical if canonical else m)
+        
+    return normalized
+
+def normalize_dimensions(dimensions: list[str]) -> list[str]:
+    normalized = []
+    for d in dimensions:
+        key = d.lower().strip()
+        normalized.append(DIMENSION_ALIASES.get(key, d))
+    return normalized
 
 # -----------------------------
 # Errors
@@ -76,14 +143,15 @@ def load_metadata(property_id: str):
         name=f"properties/{property_id}/metadata"
     )
 
-    metric_blocked_dims = {
-        m.api_name: set(m.blocked_dimensions)
+    metric_types = {
+        m.api_name: m.type_
         for m in metadata.metrics
     }
 
     dimension_set = {d.api_name for d in metadata.dimensions}
 
-    return metric_blocked_dims, dimension_set
+    return metric_types, dimension_set
+
 
 
 
@@ -91,60 +159,38 @@ def load_metadata(property_id: str):
 # Core Validation
 # -----------------------------
 
-def validate_ga4_query(
-    property_id: str,
-    metrics: List[str],
-    dimensions: List[str]
-):
-    # metric_map, dimension_set = load_metadata(property_id)
-    metric_blocked_dims, dimension_set = load_metadata(property_id)
-    # ---- existence checks ----
+def validate_ga4_query(property_id, metrics, dimensions):
+    metric_types, dimension_set = load_metadata(property_id)
+
+    # --- existence ---
     for m in metrics:
-        if m not in metric_map:
-            raise GA4ValidationError(
-                f"Invalid GA4 metric: {m}", metrics, dimensions
-            )
+        if m not in metric_types:
+            raise GA4ValidationError(f"Invalid GA4 metric: {m}", metrics, dimensions)
 
     for d in dimensions:
         if d not in dimension_set:
-            raise GA4ValidationError(
-                f"Invalid GA4 dimension: {d}", metrics, dimensions
-            )
+            raise GA4ValidationError(f"Invalid GA4 dimension: {d}", metrics, dimensions)
 
-    # ---- compatibility (authoritative) ----
+    # --- scope rules ---
     for m in metrics:
-        blocked = metric_blocked_dims[m]
-        invalid_dims = set(dimensions) & blocked
-        if invalid_dims:
+        metric_type = metric_types[m]
+
+        if metric_type == "SESSION" and EVENT_DIMENSIONS & set(dimensions):
             raise GA4ValidationError(
-                f"Metric '{m}' incompatible with dimensions {list(invalid_dims)}",
+                "Session metrics cannot be broken down by event dimensions",
                 metrics,
                 dimensions
             )
 
-    # ---- rule-based guards ----
-    if SESSION_METRICS & set(metrics) and EVENT_DIMENSIONS & set(dimensions):
-        raise GA4ValidationError(
-            "Session metrics cannot be broken down by event dimensions",
-            metrics,
-            dimensions
-        )
-
-    if USER_METRICS & set(metrics) and ITEM_DIMENSIONS & set(dimensions):
-        raise GA4ValidationError(
-            "User metrics cannot be broken down by item dimensions",
-            metrics,
-            dimensions
-        )
-
-    if ADS_METRICS & set(metrics):
-        raise GA4ValidationError(
-            "Ads metrics require Ads-linked GA4 property",
-            metrics,
-            dimensions
-        )
+        if metric_type == "USER" and ITEM_DIMENSIONS & set(dimensions):
+            raise GA4ValidationError(
+                "User metrics cannot be broken down by item dimensions",
+                metrics,
+                dimensions
+            )
 
     return True
+
 
 
 # -----------------------------
@@ -177,7 +223,16 @@ Rules:
 - Ensure compatibility
 - Preserve original intent
 - Prefer removing invalid dimensions over changing metrics
+IMPORTANT:
+GA4 metric names MUST match the GA4 Data API exactly.
 
+Examples:
+- Use "ecommercePurchases" NOT "purchases"
+- Use "eventsPerSession" NOT "eventCountPerSession"
+- Use "screenPageViews" NOT "pageViews"
+- Use "keyEvents" NOT "conversions"
+
+If unsure, choose the closest valid GA4 metric.
 Return STRICT JSON ONLY.
 
 Format:
@@ -186,7 +241,6 @@ Format:
   "dimensions": [...]
 }}
 """
-
 
 def llm_repair_query(
     client,
@@ -219,6 +273,8 @@ def validate_with_auto_repair(
     retries: int = 1
 ):
     try:
+        metrics = normalize_metrics(metrics)
+        dimensions = normalize_dimensions(dimensions)
         validate_ga4_query(property_id, metrics, dimensions)
         return metrics, dimensions
 

@@ -46,7 +46,7 @@ def analytics_query(req: AnalyticsRequest):
         )
 
 
-        summary = summarize(rows, metrics)
+        summary = summarize(req.query, rows, metrics, dimensions, [parsed["start_date"],parsed['end_date']])
 
 
         return {
