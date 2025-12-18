@@ -1,13 +1,11 @@
 from utils.packages import *
+from utils.config import *
+from utils.response_structure import *
 
 """
 GA4 Validator with Metadata API + Rule-based checks + LLM Auto-repair
 NO caching (no lru_cache)
 """
-
-from typing import List
-from google.analytics.data_v1beta import BetaAnalyticsDataClient
-from google.oauth2 import service_account
 
 
 # -----------------------------
@@ -252,12 +250,12 @@ def llm_repair_query(
     prompt = build_repair_prompt(error, metric_map, dimension_set)
 
     response = client.chat.completions.create(
-        model="gemini-2.5-flash",
+        model=parser_model,
         messages=[{"role": "user", "content": prompt}],
         temperature=0
     )
 
-    from app.nl_parser import safe_json_loads
+    logger.info(f"Model used is {parser_model}")
     return safe_json_loads(response.choices[0].message.content)
 
 

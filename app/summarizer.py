@@ -1,5 +1,6 @@
 from utils.packages import *
 from utils.response_structure import *
+from utils.config import *
 
 def summarize(query, rows, metrics, dimensions, date_range):
     logger.info(f"LLM Parse Running")
@@ -64,11 +65,11 @@ Return STRICT JSON ONLY in the following format:
         """
         logger.info(f"prompt is :- {prompt}")
         response = client.chat.completions.create(
-            model="gemini-2.5-flash",
+            model=summarizer_model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0
         )
-        logger.info(f"Response:{response}")
+        logger.info(f"Response:{response} and model used is {summarizer_model}")
         return safe_json_loads(response.choices[0].message.content)
     # return response
 

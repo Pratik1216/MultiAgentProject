@@ -35,7 +35,7 @@ Natural language query:
 WHAT TO EXTRACT
 ----------------------------------
 
-1. METRICS
+1. METRICS:- Metrics provide quantitative measurements of user behavior and performance, including users, sessions, engagement, conversions, revenue, and e-commerce.
 - Return ONLY GA4 Data API metric names (camelCase)
 - Examples:
   screenPageViews, totalUsers, activeUsers, sessions,
@@ -43,7 +43,7 @@ WHAT TO EXTRACT
 - If multiple metrics are requested, include ALL of them
 - DO NOT invent metrics
 
-2. DIMENSIONS
+2. DIMENSIONS:- Dimensions represent attributes of your data, categorized into areas like user/event information, audience, campaigns, devices, Country and various advertising platform data.
 - Return ONLY GA4 Data API dimension names
 - Examples:
   date, pagePath, pageTitle, eventName, country, browser, deviceCategory
@@ -83,11 +83,11 @@ If you are unsure about a metric or dimension, OMIT it rather than guessing.
         """
         logger.info(f"prompt is :- {prompt}")
         response = client.chat.completions.create(
-            model="gemini-2.5-flash",
+            model=parser_model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0
         )
-        logger.info(f"Response:{response}")
+        logger.info(f"Response:{response} and model used is {parser_model}")
         return safe_json_loads(response.choices[0].message.content)
     # return response
 
@@ -110,7 +110,7 @@ def parse_query(query: str):
 
         return {
             "metrics": llm_result.get("metrics", []),
-            "dimensions": DIMENSIONS,
+            "dimensions": llm_result.get("dimensions", []),
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
             "page_path": llm_result.get("page_path"),
@@ -142,5 +142,6 @@ def parse_query(query: str):
         "page_path": page_path,
         "dateRange": f"last {days} days"
     }
+
 
 
