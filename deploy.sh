@@ -4,13 +4,13 @@ set -e
 echo "Starting deployment..."
 
 # 1. Create virtual environment at repo root
-if [ ! -d ".venv" ]; then
+if [ ! -d "venv" ]; then
   echo "Creating virtual environment..."
-  python3 -m venv .venv
+  virtualenv venv
 fi
 
 # 2. Activate venv
-source .venv/bin/activate
+source venv/bin/activate
 
 # 3. Upgrade pip
 pip install --upgrade pip

@@ -1,7 +1,6 @@
-from datetime import date, timedelta
-import re
-import json
-import os
+from utils.packages import *
+from utils.config import *
+from utils.response_structure import *
 
 # ---------------- Rule-based fallback ----------------
 METRIC_MAP = {
@@ -15,44 +14,86 @@ DIMENSIONS = ["date"]
 
 # Enabled only if OPENAI_API_KEY is present
 def llm_parse(query: str):
+    logger.info(f"LLM Parse Running")
     try:
-        if not os.getenv("OPENAI_API_KEY"):
-            return None
-
-        from openai import OpenAI
-        client = OpenAI()
-
+        logger.info(f"Client Initialized")
         prompt = f"""
-You are a GA4 analytics query parser.
+        You are a Google Analytics 4 (GA4) query parsing agent.
 
-Extract:
-- GA4 metrics (screenPageViews, totalUsers, sessions,...)
-- Number of days
-- Optional page path
+Your task is to convert a natural-language analytics question into a
+STRUCTURED, GA4-EXECUTABLE QUERY.
 
-Return STRICT JSON ONLY.
+You MUST follow GA4 Data API semantics.
 
-Query:
+----------------------------------
+INPUT
+----------------------------------
+Natural language query:
 {query}
 
-JSON format:
+----------------------------------
+WHAT TO EXTRACT
+----------------------------------
+
+1. METRICS
+- Return ONLY GA4 Data API metric names (camelCase)
+- Examples:
+  screenPageViews, totalUsers, activeUsers, sessions,
+  engagementRate, eventCount, purchaseRevenue
+- If multiple metrics are requested, include ALL of them
+- DO NOT invent metrics
+
+2. DIMENSIONS
+- Return ONLY GA4 Data API dimension names
+- Examples:
+  date, pagePath, pageTitle, eventName, country, browser, deviceCategory
+- Include time dimensions (date, week, month) when time-series is implied
+- DO NOT invent dimensions
+
+3. DATE RANGE
+- Infer date range from the query
+- Return as number of days (integer)
+- If no range is specified, default to last 7 days
+
+4. FILTERS (optional)
+- Extract page path if mentioned (e.g. /pricing, /home)
+- ONLY include exact page paths
+- Do NOT infer query strings
+
+----------------------------------
+RULES (STRICT)
+----------------------------------
+- Output MUST be valid JSON
+- DO NOT include markdown
+- DO NOT include explanations
+- DO NOT include extra fields
+- DO NOT guess unsupported GA4 fields
+- Preserve user intent as much as possible
+
+----------------------------------
+OUTPUT FORMAT (STRICT)
+----------------------------------
 {{
   "metrics": ["screenPageViews", "totalUsers"],
+  "dimensions": ["date"],
   "days": 14,
   "page_path": "/pricing"
 }}
-"""
-
+If you are unsure about a metric or dimension, OMIT it rather than guessing.
+        """
+        logger.info(f"prompt is :- {prompt}")
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gemini-2.5-flash",
             messages=[{"role": "user", "content": prompt}],
             temperature=0
         )
+        logger.info(f"Response:{response}")
+        return safe_json_loads(response.choices[0].message.content)
+    # return response
 
-        return json.loads(response.choices[0].message.content)
-
-    except Exception:
+    except Exception as e:
         # Any failure → fallback to rules
+        logger.error(f"Error {e}")
         return None
 
 
@@ -62,6 +103,7 @@ def parse_query(query: str):
     llm_result = llm_parse(query)
 
     if llm_result:
+        logger.info(f"Got query response from LLM")
         days = llm_result.get("days", 7)
         end_date = date.today()
         start_date = end_date - timedelta(days=days)
@@ -72,11 +114,11 @@ def parse_query(query: str):
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
             "page_path": llm_result.get("page_path"),
-            "dateRange": f"last {days} days",
-            "parser": "llm"
+            "dateRange": f"last {days} days"
         }
 
     # 2️⃣ Deterministic rule-based fallback
+    logger.info(f"Did not receive response from LLM, running Rules Fallback")
     q = query.lower()
 
     metrics = [v for k, v in METRIC_MAP.items() if k in q]
@@ -98,6 +140,7 @@ def parse_query(query: str):
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
         "page_path": page_path,
-        "dateRange": f"last {days} days",
-        "parser": "rules"
+        "dateRange": f"last {days} days"
     }
+
+
