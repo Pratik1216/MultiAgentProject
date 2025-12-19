@@ -19,7 +19,7 @@ def health():
     return {"status": "ok"}
 
 
-@app.post("/analytics/query")
+@app.post("/query")
 def analytics_query(req: AnalyticsRequest):
     try:
         parsed = parse_query(req.query)
