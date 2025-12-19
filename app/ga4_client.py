@@ -1,7 +1,4 @@
-from google.analytics.data_v1beta import BetaAnalyticsDataClient
-from google.analytics.data_v1beta.types import DateRange, Dimension, Metric, RunReportRequest, FilterExpression, Filter
-from google.oauth2 import service_account
-
+from utils.packages import *
 
 def get_client():
     credentials = service_account.Credentials.from_service_account_file(
@@ -42,3 +39,33 @@ def run_report(property_id, metrics, dimensions, start_date, end_date, page_path
         rows.append(entry)
 
     return rows
+
+def run_realtime_report(
+    property_id,
+    metrics,
+    dimensions,
+    minute_ranges=['30']
+):
+    client = get_client()
+
+    request = RunRealtimeReportRequest(
+        property=f"properties/{property_id}",
+        metrics=[{"name": m} for m in metrics],
+        dimensions=[{"name": d} for d in dimensions],
+        minute_ranges=[
+            MinuteRange(start_minutes_ago=int(m), end_minutes_ago=0)
+            for m in minute_ranges
+        ]
+    )
+    logger.info(f"Request is {request}")
+    response = client.run_realtime_report(request)
+    logger.info(f"Response of realtime report looks like {response}")
+    rows = []
+    for row in response.rows:
+        entry = {}
+        for i, d in enumerate(dimensions):
+            entry[d] = row.dimension_values[i].value
+        for i, m in enumerate(metrics):
+            entry[m] = int(row.metric_values[i].value)
+        rows.append(entry)
+    return rows,[(int(m),0) for m in minute_ranges]

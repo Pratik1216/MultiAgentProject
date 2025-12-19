@@ -60,6 +60,10 @@ WHAT TO EXTRACT
 - ONLY include exact page paths
 - Do NOT infer query strings
 
+5. IS_REALTIME
+- Extract this flag as True/False based on context relating to realtime info
+- Some example realtime indicating keywords:-right now,last 30 minutes,live users,realtime,currently active
+
 ----------------------------------
 RULES (STRICT)
 ----------------------------------
@@ -77,7 +81,9 @@ OUTPUT FORMAT (STRICT)
   "metrics": ["screenPageViews", "totalUsers"],
   "dimensions": ["date"],
   "days": 14,
-  "page_path": "/pricing"
+  "page_path": "/pricing",
+  "is_realtime":"False",
+  "minute_ranges:["20"]
 }}
 If you are unsure about a metric or dimension, OMIT it rather than guessing.
         """
@@ -114,7 +120,9 @@ def parse_query(query: str):
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
             "page_path": llm_result.get("page_path"),
-            "dateRange": f"last {days} days"
+            "dateRange": f"last {days} days",
+            "minute_ranges": llm_result.get("minute_ranges", ['29']),
+            "is_realtime": llm_result.get("is_realtime", "False")
         }
 
     # 2️⃣ Deterministic rule-based fallback
@@ -140,7 +148,9 @@ def parse_query(query: str):
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
         "page_path": page_path,
-        "dateRange": f"last {days} days"
+        "dateRange": f"last {days} days",
+        "minute_ranges": llm_result.get("minute_ranges", ['29']),
+        "is_realtime": "False"
     }
 
 

@@ -96,6 +96,32 @@ DIMENSION_ALIASES = {
     "month": "month"
 }
 
+REALTIME_ALLOWED_METRICS = {
+    "eventCount",
+    "activeUsers",
+    "screenPageViews",
+    "keyEvents"
+}
+
+REALTIME_ALLOWED_DIMENSIONS = {
+    "eventName",
+    "deviceCategory",
+    "platform",
+    "appVersion",
+    "audienceId",
+    "audienceName",
+    "audienceResourceName",
+    "city",
+    "cityId",
+    "country",
+    "countryId",
+    "deviceCategory",
+    "minutesAgo",
+    "streamId",
+    "streamName",
+    "unifiedScreenName"
+}
+
 def normalize_metrics(metrics: list[str]) -> list[str]:
     normalized = []
 
@@ -117,12 +143,19 @@ def normalize_dimensions(dimensions: list[str]) -> list[str]:
 # Errors
 # -----------------------------
 
-class GA4ValidationError(Exception):
-    def __init__(self, reason, metrics, dimensions):
+class GA4BaseValidationError(Exception):
+    def __init__(self,reason, metrics=None, dimensions=None, extra=None):
         super().__init__(reason)
         self.reason = reason
-        self.metrics = metrics
-        self.dimensions = dimensions
+        self.metrics = metrics or []
+        self.dimensions = dimensions or []
+        self.extra = extra or {}
+
+class GA4ValidationError(GA4BaseValidationError):
+    pass
+
+class GA4RealtimeValidationError(GA4BaseValidationError):
+    pass
 
 
 # -----------------------------
@@ -149,9 +182,6 @@ def load_metadata(property_id: str):
     dimension_set = {d.api_name for d in metadata.dimensions}
 
     return metric_types, dimension_set
-
-
-
 
 # -----------------------------
 # Core Validation
@@ -190,14 +220,30 @@ def validate_ga4_query(property_id, metrics, dimensions):
     return True
 
 
+def validate_realtime_query(metrics, dimensions):
+    for m in metrics:
+        if m not in REALTIME_ALLOWED_METRICS:
+            raise GA4RealtimeValidationError(
+                f"Metric '{m}' is not supported in GA4 Realtime reports",
+                metrics, dimensions
+            )
+
+    for d in dimensions:
+        if d not in REALTIME_ALLOWED_DIMENSIONS:
+            raise GA4RealtimeValidationError(
+                f"Dimension '{d}' is not supported in GA4 Realtime reports",
+                metrics, dimensions
+            )
+    return True
 
 # -----------------------------
 # LLM Auto-repair
 # -----------------------------
 
-def build_repair_prompt(error, metric_map, dimension_set):
+def build_repair_prompt(error, metric_map, dimension_set,mode="Core"):
+    logger.info(f"The Repair Prompt is building")
     return f"""
-You are a Google Analytics 4 query repair agent.
+You are a Google Analytics 4 query repair agent repairing {mode.upper()} query.
 
 The GA4 query below is INVALID.
 
@@ -211,12 +257,16 @@ Dimensions:
 {error.dimensions}
 
 VALID METRICS:
-{list(metric_map.keys())}
+{list(metric_map)}
 
 VALID DIMENSIONS:
 {list(dimension_set)}
 
+Invalid error:
+{str(error)}
+
 Rules:
+- ONLY return fields supported by GA4 {mode.upper()} reports
 - Use ONLY valid metrics and dimensions
 - Ensure compatibility
 - Preserve original intent
@@ -243,19 +293,24 @@ Format:
 def llm_repair_query(
     client,
     property_id: str,
-    error: GA4ValidationError
+    error: GA4BaseValidationError,
+    mode:"Core"
 ):
-    metric_map, dimension_set = load_metadata(property_id)
+    if mode.lower()=="core":
+        metric_type, dimension_set = load_metadata(property_id)
+        metric_map = metric_type.keys()
+    else:
+        metric_map, dimension_set = REALTIME_ALLOWED_METRICS,REALTIME_ALLOWED_DIMENSIONS
 
-    prompt = build_repair_prompt(error, metric_map, dimension_set)
-
+    prompt = build_repair_prompt(error, metric_map, dimension_set,mode)
+    logger.info(f"The Repair prompt is generated, {prompt}")
     response = client.chat.completions.create(
         model=parser_model,
         messages=[{"role": "user", "content": prompt}],
         temperature=0
     )
 
-    logger.info(f"Model used is {parser_model}")
+    logger.info(f"Model used is {parser_model} with response is {response}")
     return safe_json_loads(response.choices[0].message.content)
 
 
@@ -266,28 +321,42 @@ def llm_repair_query(
 def validate_with_auto_repair(
     client,
     property_id: str,
-    metrics: List[str],
-    dimensions: List[str],
+    metrics: list[str],
+    dimensions: list[str],
+    mode: str = "core",
     retries: int = 1
 ):
     try:
-        metrics = normalize_metrics(metrics)
-        dimensions = normalize_dimensions(dimensions)
-        validate_ga4_query(property_id, metrics, dimensions)
+        if mode == "realtime":
+            logger.info(f"Identified Mode is {mode}")
+            validate_realtime_query(metrics, dimensions)
+        else:
+            metrics = normalize_metrics(metrics)
+            dimensions = normalize_dimensions(dimensions)
+            validate_ga4_query(property_id, metrics, dimensions)
+
         return metrics, dimensions
 
-    except GA4ValidationError as e:
+    except GA4BaseValidationError as e:
+        logger.info(f"GA4BaseValidationError is raised")
         if retries <= 0:
             raise
 
-        repaired = llm_repair_query(client, property_id, e)
+        repaired = llm_repair_query(
+            client=client,
+            property_id=property_id,
+            error=e,
+            mode=mode
+        )
 
         return validate_with_auto_repair(
             client,
             property_id,
             repaired["metrics"],
             repaired["dimensions"],
-            retries - 1
+            mode=mode,
+            retries=retries - 1
         )
+
 
 

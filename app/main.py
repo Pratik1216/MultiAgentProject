@@ -4,6 +4,8 @@ from app.ga4_schema_validator import *
 from app.nl_parser import *
 from app.ga4_client import *
 from app.summarizer import *
+from app.report_router import *
+
 app = FastAPI()
 
 
@@ -21,38 +23,46 @@ def health():
 def analytics_query(req: AnalyticsRequest):
     try:
         parsed = parse_query(req.query)
-        # validate_fields(parsed["metrics"], parsed["dimensions"])
+        metrics = parsed.get("metrics", [])
+        dimensions = parsed.get("dimensions", [])
+
+        if not metrics:
+            raise ValueError("No valid GA4 metrics found")
+
+        # 2. Determine report mode
+        mode = "realtime" if parsed.get("is_realtime") else "core"
+        # 3. Validate + auto-repair schema
         metrics, dimensions = validate_with_auto_repair(
-            client,
-            req.propertyId,
-            parsed["metrics"],
-            parsed["dimensions"]
+            client,  # LLM client is created inside repair function
+            property_id=req.propertyId,
+            metrics=metrics,
+            dimensions=dimensions,
+            mode=mode
         )
-        # validate_ga4_query(
-        #     property_id=req.propertyId,
-        #     metrics=parsed["metrics"],
-        #     dimensions=parsed["dimensions"]
-        # )
+        parsed['metrics'] = metrics
+        parsed['dimensions'] = dimensions
+        logger.info('Validataion of metrics and dimensions is completed')
+        # 4. Execute report (router decides core vs realtime)
+        rows = execute_report(parsed, req.propertyId)
 
-        # report_type = infer_report_type(parsed["dimensions"])
-
-        rows = run_report(
-        property_id=req.propertyId,
-        metrics=metrics,
-        dimensions=dimensions,
-        start_date=parsed["start_date"],
-        end_date=parsed["end_date"],
-        page_path=parsed.get("page_path")
-        )
-
-
-        summary = summarize(req.query, rows, metrics, dimensions, [parsed["start_date"],parsed['end_date']])
-
+        # 5. Summarize results
+        if mode.lower()=='core':
+            summary = summarize(req.query, rows, metrics, dimensions, [parsed["start_date"],parsed['end_date']])
+        else:
+            summary = summarize(req.query, rows[0], metrics, dimensions, rows[1])
 
         return {
-            "metadata": parsed,
+            "metadata": {
+                "propertyId": req.propertyId,
+                "mode": mode,
+                "metrics": metrics,
+                "dimensions": dimensions,
+                "duration": rows[1],
+                "page_path": parsed.get("page_path")
+            },
             "data": rows,
             "summary": summary
         }
+
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
