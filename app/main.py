@@ -5,6 +5,9 @@ from app.nl_parser import *
 from app.ga4_client import *
 from app.summarizer import *
 from app.report_router import *
+from utils.packages import *
+from agent.seo_agent import *
+from utils.config import *
 
 app = FastAPI()
 
@@ -66,3 +69,16 @@ def analytics_query(req: AnalyticsRequest):
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+class SEORequest(BaseModel):
+    query: str
+    file_path: str
+
+@app.post("/seo/query")
+def seo_query(req: SEORequest):
+    result = run_seo_agent(
+        llm_client=client,
+        excel_path=req.file_path,
+        query=req.query
+    )
+    return {"result": result}
